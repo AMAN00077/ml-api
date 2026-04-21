@@ -15,12 +15,12 @@ scaler = joblib.load(os.path.join(model_path, "scaler.pkl"))
 risk_model = joblib.load(os.path.join(model_path, "rf_risk_model.pkl"))
 cgpa_model = joblib.load(os.path.join(model_path, "cgpa_model.pkl"))
 
-# ---------------- ROOT (FIX FOR 404) ----------------
+# ---------------- ROOT ----------------
 @app.route("/")
 def home():
     return "ML API Running Successfully"
 
-# ---------------- PREDICTION API ----------------
+# ---------------- PREDICT ----------------
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
@@ -42,13 +42,6 @@ def predict():
         participation = participation_map[data["class_participation"]]
         submission = submission_map[data["submission_regular"]]
 
-        # -------- VALIDATION --------
-        if not (0 <= prev_cgpa <= 10):
-            return jsonify({"error": "CGPA must be between 0 and 10"}), 400
-
-        if not (0 <= attendance <= 100):
-            return jsonify({"error": "Attendance must be between 0 and 100"}), 400
-
         # -------- FEATURES --------
         features = np.array([[ 
             attendance, internal, assignment, quiz,
@@ -69,12 +62,7 @@ def predict():
         if internal > 80: adjustment += 0.3
         if study_hours > 5: adjustment += 0.2
 
-        predicted_cgpa = ml_cgpa + adjustment
-
-        if attendance > 90 and internal > 90 and backlogs == 0:
-            predicted_cgpa = max(predicted_cgpa, prev_cgpa)
-
-        predicted_cgpa = round(max(0, min(10, predicted_cgpa)), 2)
+        predicted_cgpa = round(max(0, min(10, ml_cgpa + adjustment)), 2)
 
         # -------- PASS FAIL --------
         pass_fail = "Pass" if predicted_cgpa >= 5 else "Fail"
@@ -97,11 +85,56 @@ def predict():
         if backlogs >= 3:
             risk_level = "High"
 
+        # -------- REASON --------
+        reasons = []
+        suggestions = []
+
+        if attendance < 50:
+            reasons.append("very low attendance")
+            suggestions.append("increase attendance above 75%")
+        elif attendance < 75:
+            reasons.append("moderate attendance")
+            suggestions.append("attend classes regularly")
+        elif attendance > 85:
+            reasons.append("excellent attendance")
+
+        if internal < 40:
+            reasons.append("poor internal marks")
+            suggestions.append("revise concepts daily")
+        elif internal < 60:
+            reasons.append("average internal marks")
+            suggestions.append("practice more questions")
+        elif internal > 80:
+            reasons.append("strong academic performance")
+
+        if backlogs >= 3:
+            reasons.append("multiple backlogs")
+            suggestions.append("focus on clearing backlogs first")
+
+        if study_hours < 2:
+            reasons.append("very low study hours")
+            suggestions.append("study at least 3-4 hours daily")
+        elif study_hours > 5:
+            reasons.append("good study consistency")
+
+        # -------- TEXT --------
+        if pass_fail == "Fail":
+            reason_text = "The student is likely to fail due to " + ", ".join(reasons)
+        else:
+            reason_text = "The student is expected to pass with " + ", ".join(reasons)
+
+        suggestion_text = (
+            "Recommended actions: " + ", ".join(suggestions)
+            if suggestions else "Maintain current performance."
+        )
+
         # -------- RESPONSE --------
         return jsonify({
             "pass_fail": pass_fail,
             "risk_level": risk_level,
             "predicted_cgpa": predicted_cgpa,
+            "reason": reason_text,
+            "suggestion": suggestion_text,
             "model_pass_prediction": model_pass
         })
 
@@ -109,5 +142,7 @@ def predict():
         return jsonify({"error": str(e)}), 500
 
 
+# ---------------- RENDER FIX ----------------
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
